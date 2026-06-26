@@ -4,7 +4,6 @@ use crate::runner::{Runner, Value};
 mod math;
 mod obj;
 mod io;
-mod sdl3;
 
 pub trait Module {
     fn get_load_name() -> String;
@@ -32,7 +31,6 @@ pub fn register_modules(table: &mut HashMap<String, fn(&mut Runner) -> Value>) {
     register_module!(table, math::Math);
     register_module!(table, obj::Obj);
     register_module!(table, io::Io);
-    register_module!(table, sdl3::SDL3);
 
     //res
 }
