@@ -1,0 +1,13 @@
+{
+	let io = import("std::io");
+
+	let a = 14;
+	
+	let greet = fn(name) {
+		io.print("Hello", name);
+
+		name
+	};
+
+	greet("Papa")
+}

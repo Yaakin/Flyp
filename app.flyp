@@ -1,0 +1,44 @@
+{
+	let math = import("std::math");
+	let obj = import("std::obj");
+	let sdl3 = import("std::sdl3");
+
+    // single line comment
+
+	let render = fn () {
+		ctx.set_color(18, 18, 18);
+		ctx.clear();
+
+		ctx.set_color(255, 0, 0);
+		ctx.rect([
+			x: math.sub(mouse_pos.x, 50);
+			y: math.sub(mouse_pos.y, 50);
+			w: 100;
+			h: 100;
+		]);
+
+		ctx.present()
+	};
+
+
+	let ctx = sdl3.init();
+	let running = true;
+
+	let mouse_pos = [ x: 0; y: 0 ];
+
+	while (running) {
+		while (let e = ctx.poll_event()) {
+			if (obj.has(e, "Event_Quit")) {
+				let running = false
+			} else if (obj.has(e, "Event_KeyDown")) {
+				if (math.equ(e.keycode, sdl3.keycodes.ESCAPE))
+					let running = false
+			}	else if (obj.has(e, "Event_MouseMotion")) {
+				let mouse_pos = [ x: e.x; y: e.y ];
+			}
+		};
+		render();
+	};
+
+	"Bye bye"
+}

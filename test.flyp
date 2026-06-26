@@ -1,0 +1,29 @@
+#!/run/current-system/sw/bin/env -S /home/albin/Code/flyp/target/debug/flyp run
+#
+
+{
+	let io = import("std::io");
+	let math = import("std::math");
+
+	let s = math.sub;
+
+	let nested = [
+		player: [
+			name: "Coucou";
+			score: "hey";
+		];
+		age: 14;
+	];
+
+	let test = fn(a, b, c) {
+		a
+	};
+
+	io.print(s(14, 2));
+
+	// coucou
+	# this is a 
+	multi line comment#
+
+	io.print(nested)
+}
