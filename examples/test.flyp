@@ -1,0 +1,10 @@
+{
+	let math = import("std::math");
+	let io = import("std::io");
+
+	let a = fn(b) math.add(b, 2);
+	let c = fn(d) io.print(d);
+
+	io.print(a(4))
+
+}

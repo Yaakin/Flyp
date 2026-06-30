@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use crate::runner::{Runner, Value};
 
 mod math;
-mod obj;
 mod io;
 
 pub trait Module {
@@ -26,11 +25,6 @@ pub trait Module {
 }
 
 pub fn register_modules(table: &mut HashMap<String, fn(&mut Runner) -> Value>) {
-    //let mut res: HashMap<String, for<'a> fn(&'a mut _) -> Value> = HashMap::new();
-
     register_module!(table, math::Math);
-    register_module!(table, obj::Obj);
     register_module!(table, io::Io);
-
-    //res
 }

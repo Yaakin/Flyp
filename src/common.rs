@@ -30,7 +30,7 @@ pub fn repl() {
         if buffer != ":q" {
             let mut p = Parser::new(&buffer);
             let res = r.eval(&p.expr());
-            println!("{}", res.repr());
+            println!("{}", res.repr(&r));
         }
     }
 }

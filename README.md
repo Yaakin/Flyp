@@ -19,11 +19,11 @@ Primary expressions are basic values that are used to build more complex express
 ## Litterals
 
 You can then build expressions from these:
-- Binding: `let x = val`, stores a variable in the current scope (or higher if it already exists) and is evaluated as `val`
-- Identifier: `x`, refers to a variable in the current (or higher) scope, defined by a binding
+- Binding: `let x = val`, stores a variable in the current scope (or globals if it already exists) and is evaluated as `val`
+- Identifier: `x`, refers to a variable in the current (or global) scope, defined by a binding
 - Lists: `<1; 2; 3; ... >`, are indexed with `your_list<index>`
 - Objects: `[ name: "Yaakin"; score: 10; ... ]`, are indexed with `your_obj.name`
-- Functions: `fn(arg1, arg2, ...) return_value`, does not implement closures yet and can be called with `func_name(arg1, arg2, ...)`
+- Functions: `fn(arg1, arg2, ...) return_value`, can be called with `func_name(arg1, arg2, ...)`
 
 ## Control Flow
 

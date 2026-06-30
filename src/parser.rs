@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Debug)]
 pub enum Target {
@@ -21,11 +21,11 @@ pub enum Expr {
     Function {
         args: Vec<String>,
         value: Box<Expr>,
+        closure: HashSet<String>,
     },
     Object(HashMap<String, Expr>),
     List(Vec<Expr>),
 
-    Identifier(String),
     Access(Target),
 
     FuncCall {
@@ -271,7 +271,7 @@ impl<'a> Parser<'a> {
     fn target(&mut self) -> Option<Expr> {
         if let (Some(base), _) = self.identifier() {
             let mut found;
-            let mut e = Expr::Identifier(base);
+            let mut e = Expr::Access(Target::Var(base));
             (found, e) = self.modifiers(e);
             while found {
                 (found, e) = self.modifiers(e);
@@ -281,6 +281,65 @@ impl<'a> Parser<'a> {
             println!("Expected identifier");
             None
         }
+    }
+
+    fn scan_closure(&self, e: &Expr) -> HashSet<String> {
+        let mut res = HashSet::new();
+        match e {
+            Expr::Function { args, value, closure } => {
+                res.extend(closure.clone());
+                res.extend(self.scan_closure(value));
+
+                for a in args {
+                    res.remove(a);
+                }
+            },
+            Expr::Object(fields) => {
+                for (_, val) in fields {
+                    res.extend(self.scan_closure(val));
+                }
+            },
+            Expr::List(exprs) => {
+                for e in exprs {
+                    res.extend(self.scan_closure(e));
+                }
+
+            },
+            Expr::Access(t) => { 
+                match t {
+                    Target::Var(name) => { res.insert(name.to_string()); },
+                    Target::Field { var, .. } => { res.extend(self.scan_closure(var)); },
+                    Target::Index { var, .. } => { res.extend(self.scan_closure(var)); },
+                }
+            },
+            //res.extend(self.scan_closure(&t.base())); },
+            Expr::If { cond, value, else_value } => {
+                res.extend(self.scan_closure(cond));
+                res.extend(self.scan_closure(value));
+                res.extend(self.scan_closure(else_value));
+            },
+            Expr::While { cond, value, else_value } => {
+                res.extend(self.scan_closure(cond));
+                res.extend(self.scan_closure(value));
+                res.extend(self.scan_closure(else_value));
+            },
+            Expr::Binding { value, .. } => {
+                res.extend(self.scan_closure(value));
+            },
+            Expr::Chain(exprs) => {
+                for e in exprs {
+                    res.extend(self.scan_closure(e));
+                }
+            },
+            Expr::FuncCall { func, args } => {
+                res.extend(self.scan_closure(func));
+                for a in args {
+                    res.extend(self.scan_closure(a));
+                }
+            },
+            _ => {}
+        }
+        res
     }
 
     pub fn expr(&mut self) -> Expr {
@@ -304,7 +363,7 @@ impl<'a> Parser<'a> {
                     self.state = r;
                     Expr::Nil
                 }
-            } else if let Some(Expr::Identifier(name)) = t {
+            } /*else if let Some(Expr::Identifier(name)) = t {
                 if let (Some(_), _) = self.litteral("=") {
                     Expr::Binding {
                         target: Target::Var(name),
@@ -316,7 +375,7 @@ impl<'a> Parser<'a> {
                     Expr::Nil
                 }
 
-            } else {
+            }*/ else {
                 println!("Expected an identifier for binding, got: {t:?}");
                 self.state = r;
                 Expr::Nil
@@ -352,9 +411,19 @@ impl<'a> Parser<'a> {
                     }
                 }
 
+                let return_value = self.expr();
+                let res = Expr::Function {
+                    args: args.clone(),
+                    value: Box::new(return_value.clone()),
+                    closure: HashSet::new(),
+                };
+
+                let closure = self.scan_closure(&res);
+
                 Expr::Function{
                     args: args,
-                    value: Box::new(self.expr()),
+                    value: Box::new(return_value),
+                    closure: closure,
                 }
             } else {
                 println!("Expected '(' for argument definition");
