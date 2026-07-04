@@ -2,9 +2,15 @@
 	let math = import("std::math");
 	let io = import("std::io");
 
-	let a = fn(b) math.add(b, 2);
-	let c = fn(d) io.print(d);
+	let x = [
+		x: 0;
 
-	io.print(a(4))
+		move: fn () {
+			let self.x = math.add(self.x, 1)
+		}
+	];
 
+	io.print(x);
+	x.move();
+	io.print(x)
 }

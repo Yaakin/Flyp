@@ -22,6 +22,7 @@ pub enum Expr {
         args: Vec<String>,
         value: Box<Expr>,
         closure: HashSet<String>,
+        reflection: bool,
     },
     Object(HashMap<String, Expr>),
     List(Vec<Expr>),
@@ -286,7 +287,7 @@ impl<'a> Parser<'a> {
     fn scan_closure(&self, e: &Expr) -> HashSet<String> {
         let mut res = HashSet::new();
         match e {
-            Expr::Function { args, value, closure } => {
+            Expr::Function { args, value, closure, reflection: _ } => {
                 res.extend(closure.clone());
                 res.extend(self.scan_closure(value));
 
@@ -416,14 +417,21 @@ impl<'a> Parser<'a> {
                     args: args.clone(),
                     value: Box::new(return_value.clone()),
                     closure: HashSet::new(),
+                    reflection: false,
                 };
 
-                let closure = self.scan_closure(&res);
+                let mut closure = self.scan_closure(&res);
+                let mut reflection = false;
+                if closure.get("self").is_some() {
+                    closure.remove("self");
+                    reflection = true;
+                }
 
                 Expr::Function{
                     args: args,
                     value: Box::new(return_value),
                     closure: closure,
+                    reflection,
                 }
             } else {
                 println!("Expected '(' for argument definition");

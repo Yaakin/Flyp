@@ -1,11 +1,11 @@
 use std::collections::HashMap;
-use crate::runner::{Runner, Value, Stored};
+use crate::runner::{Runner, Value, Stored, Function};
 use crate::modules::Module;
 
 pub struct Io;
 
 impl Io {
-    pub fn print(r: &mut Runner, args: &Vec<Value>) -> Value {
+    pub fn print(r: &mut Runner, args: &Vec<Value>, _: Option<Value>) -> Value {
         for a in args {
             print!("{} ", a.repr(r));
         }
@@ -21,7 +21,7 @@ impl Module for Io {
 
     fn load(r: &mut Runner) -> Value {
         let res = Stored::Object(HashMap::from([
-            ("print".to_string(), r.register(Stored::Native(Io::print))),
+            ("print".to_string(), r.register(Stored::Func(Function::Native(Io::print)))),
         ]));
         r.register(res)
     }

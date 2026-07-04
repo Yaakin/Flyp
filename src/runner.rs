@@ -52,15 +52,21 @@ impl Value {
 }
 
 #[derive(Clone, Debug)]
-pub enum Stored {
-    Str(String),
-
-    Function{
+pub enum Function {
+    Defined {
         args: Vec<String>,
         value: Expr,
         closure: HashMap<String, Value>,
+        reflection: bool,
     },
-    Native(for <'a, 'b> fn(&'a mut Runner, &'b Vec<Value>) -> Value),
+    Native(for <'a, 'b> fn(&'a mut Runner, &'b Vec<Value>, reflection: Option<Value>) -> Value),
+}
+
+#[derive(Clone, Debug)]
+pub enum Stored {
+    Str(String),
+
+    Func(Function),
     Object(HashMap<String, Value>),
     List(Vec<Value>),
 }
@@ -69,8 +75,7 @@ impl Stored {
     pub fn to_bool(&self) -> bool {
         match self {
             Stored::Str(s) => s.len() > 0,
-            Stored::Function{..} => true,
-            Stored::Native(_) => true,
+            Stored::Func(_) => true,
             Stored::Object(fields) => fields.len() > 0,
             Stored::List(elements) => elements.len() > 0,
         }
@@ -79,8 +84,8 @@ impl Stored {
     pub fn repr(&self, r: &Runner) -> String {
        match self {
             Stored::Str(s) => s.clone(),
-            Stored::Function{..} => format!("<Function>"),
-            Stored::Native(_) => format!("<NativeFunction>"),
+            Stored::Func(Function::Defined {..}) => format!("<Function>"),
+            Stored::Func(Function::Native(_)) => format!("<NativeFunction>"),
             Stored::Object(fields) => {
                 let mut res = "[".to_string();
                 for (key, val) in fields.iter() {
@@ -121,7 +126,8 @@ impl Runner {
         Self {
             loadables: loadables,
             memory: HashMap::from([
-                (0 as MemId, MemCell { data: Stored::Native(Runner::import) }),
+                (0 as MemId, MemCell { data: Stored::Func(Function::Native(Runner::import)) }),
+                (1 as MemId, MemCell { data: Stored::Func(Function::Native(Runner::id)) }),
             ]),
             scopes: Vec::new(),
             globals: HashMap::from([
@@ -129,6 +135,7 @@ impl Runner {
                 ("true".to_string(), Value::Bool(true)),
                 ("false".to_string(), Value::Bool(false)),
                 ("import".to_string(), Value::Ref(0)),
+                ("id".to_string(), Value::Ref(1)),
             ]),
         }
     }
@@ -251,8 +258,27 @@ impl Runner {
         }
     }
 
+    pub fn needs_reflection(&mut self, val: &Expr) -> Option<(Function, Option<Value>)> {
+        if let Expr::Access(Target::Field { var, field }) = val {
+            if let Value::Ref(id) = self.eval(var) && let Some(Stored::Object(fields)) = self.get_mem(id) {
+                if fields.contains_key(field) && let Value::Ref(f_id) = fields.get(field).unwrap() && let Some(Stored::Func(f)) = self.get_mem(*f_id) {
+                    Some((f.clone(), Some(Value::Ref(id))))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            if let Value::Ref(id) = self.eval(val) && let Some(Stored::Func(f)) = self.get_mem(id) {
+                Some((f.clone(), None))
+            } else {
+                None
+            }
+        }
+    }
+
     pub fn eval(&mut self, e: &Expr) -> Value {
-        //println!("{:?}, {:?}", self.scopes, self.memory);
         match e {
             Expr::Nil => Value::Nil,
             Expr::Number(x) => Value::Number(*x),
@@ -280,13 +306,12 @@ impl Runner {
                 let id = self.store(Stored::List(res));
                 Value::Ref(id)
             },
-            //Expr::Identifier(name) => self.get_val(&name),
-            Expr::Function { args, value, closure } => {
+            Expr::Function { args, value, closure, reflection } => {
                 let mut closed = HashMap::<String, Value>::new();
                 for name in closure {
                     closed.insert(name.clone(), self.eval(&Expr::Access(Target::Var(name.clone()))));
                 }
-                let id = self.store(Stored::Function { args: args.to_vec(), value: *value.clone(), closure: closed });
+                let id = self.store(Stored::Func(Function::Defined { args: args.to_vec(), value: *value.clone(), closure: closed, reflection: *reflection }));
                 Value::Ref(id)
             },
             Expr::If { cond, value, else_value } => {
@@ -317,50 +342,19 @@ impl Runner {
                 self.get_val(target.clone())
             },
             Expr::FuncCall { func, args: arg_exprs } => {
-                if let Value::Ref(id) = self.eval(func) {
-                    if let Some(s) = self.get_mem(id) {
-                        match s.clone() {
-                            Stored::Function { args: arg_names, value, closure } => {
-                                let mut arg_values = Vec::with_capacity(arg_exprs.len());
-                                for e in arg_exprs {
-                                    arg_values.push(self.eval(e));
-                                }
-
-                                self.scopes.push(HashMap::new());
-                                for (k, v) in closure {
-                                    self.set_val(Target::Var(k.to_string()), v);
-                                }
-
-                                for i in 0..arg_names.len() {
-                                    if i < arg_values.len() {
-                                        self.set_val(Target::Var(arg_names[i].clone()), arg_values[i].clone());
-                                    } else {
-                                        self.set_val(Target::Var(arg_names[i].clone()), Value::Nil);
-                                    }
-                                }
-                                let res = self.eval(&value);
-                                self.scopes.pop();
-                                res
-                            },
-                            Stored::Native(f) => {
-                                let mut arg_values = Vec::new();
-                                for e in arg_exprs {
-                                    arg_values.push(self.eval(e));
-                                }
-                                f(self, &arg_values)
-                            },
-                            _ => {
-                                println!("Cannot call non-function value");
-                                Value::Nil
-                            }
+                match self.needs_reflection(func) {
+                    Some((f, refl)) => {
+                        let mut arg_values = Vec::with_capacity(arg_exprs.len());
+                        for e in arg_exprs {
+                            arg_values.push(self.eval(e));
                         }
-                    } else {
-                        println!("sldkjfqlkjdf");
+
+                        self.call_func(f, arg_values, refl)
+                    },
+                    None => {
+                        println!("Cannot call non-function value");
                         Value::Nil
                     }
-                } else {
-                    println!("Cannot call non-function value");
-                    Value::Nil
                 }
             },
             Expr::Chain(exprs) => {
@@ -373,7 +367,39 @@ impl Runner {
         }
     }
 
-    fn import(&mut self, args: &Vec<Value>) -> Value {
+    pub fn call_func(&mut self, f: Function, args: Vec<Value>, refl: Option<Value>) -> Value {
+        match f {
+            Function::Defined { args: arg_names, value, closure, reflection } => {
+                self.scopes.push(HashMap::new());
+                for (k, v) in closure {
+                    self.set_val(Target::Var(k.to_string()), v);
+                }
+
+                for i in 0..arg_names.len() {
+                    if i < args.len() {
+                        self.set_val(Target::Var(arg_names[i].clone()), args[i].clone());
+                    } else {
+                        self.set_val(Target::Var(arg_names[i].clone()), Value::Nil);
+                    }
+                }
+                
+                if reflection {
+                    if refl.is_some() {
+                        self.set_val(Target::Var("self".to_string()), refl.unwrap());
+                    } else {
+                        self.set_val(Target::Var("self".to_string()), Value::Nil);
+                    }
+                } 
+
+                let res = self.eval(&value);
+                self.scopes.pop();
+                res
+            },
+            Function::Native(f) => f(self, &args, refl)
+        }
+    }
+
+    fn import(&mut self, args: &Vec<Value>, _: Option<Value>) -> Value {
         if args.len() < 1 {
             println!("Import path expected");
             return Value::Nil;
@@ -402,6 +428,18 @@ impl Runner {
         } else {
             println!("Expected a string path to import");
             Value::Nil
+        }
+    }
+
+    fn id(&mut self, args: &Vec<Value>, _: Option<Value>) -> Value {
+        if args.len() < 1 {
+            println!("Invalid arguments for id");
+            return Value::Nil;
+        }
+
+        match args[0] {
+            Value::Ref(id) => Value::Number(id as f64),
+            _ => Value::Nil,
         }
     }
 }

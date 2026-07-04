@@ -25,6 +25,9 @@ You can then build expressions from these:
 - Objects: `[ name: "Yaakin"; score: 10; ... ]`, are indexed with `your_obj.name`
 - Functions: `fn(arg1, arg2, ...) return_value`, can be called with `func_name(arg1, arg2, ...)`
 
+> [!TIP]
+> When creating an object with a function field, a variable named `self` referring to the caller's parent is created implicitely
+
 ## Control Flow
 
 - If: `if (cond) val`, accepts an `else val` part which is evaluated if `cond` is false
@@ -37,7 +40,8 @@ To build the project:
 ```sh
 git clone https://github.com/Yaakin/flyp
 cd flyp
-cargo build```
+cargo build
+```
 
 To run a file, `cargo run -- run your_file.flyp`
 There is also a repl, but it is quite unfinished and I probably won't work on it anytime soon
@@ -61,3 +65,4 @@ fn main() {
         println!("Cant read input file {}", filename);
     }
 }
+```
