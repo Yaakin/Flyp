@@ -17,7 +17,7 @@ fn main() {
                 common::run_file(&args.next().unwrap());
             }
         },
-        Some(command) if command == "repl".to_string() => common::repl(),
+        //Some(command) if command == "repl".to_string() => common::repl(),
         Some(command) => {
             println!("Unrecognized command: {command}");
             common::usage();

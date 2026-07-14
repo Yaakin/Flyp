@@ -1,16 +1,7 @@
 {
-	let math = import("std::math");
-	let io = import("std::io");
-
-	let x = [
-		x: 0;
-
-		move: fn () {
-			let self.x = math.add(self.x, 1)
-		}
-	];
-
-	io.print(x);
-	x.move();
-	io.print(x)
+	let io = import("io");
+	let math = import("math");
+	
+	io.print("coucou");
+	math.add(1, 2)
 }

@@ -1,30 +1,17 @@
 use std::collections::HashMap;
-use crate::runner::{Runner, Value};
+use crate::runner::{NativeObject, Value, Runner};
 
 mod math;
 mod io;
+mod list;
 
-pub trait Module {
-    fn get_load_name() -> String;
-    fn load(_: &mut Runner) -> Value;
-}
-
-#[macro_export] macro_rules! register_module {
-    ($r:expr, $m:ty) => {
-        $r.insert(<$m>::get_load_name(), <$m>::load);
-    }
-}
-
-#[macro_export] macro_rules! internals {
-    ($r:expr, $m:ty) => {
-        $r.internals.get_mut(&<$m>::get_load_name())
-            .unwrap()
-            .downcast_mut::<$m>()
-            .unwrap();
-    }
+pub trait Module: NativeObject {
+    fn name() -> String;
+    fn load(r: &mut Runner) -> Value;
 }
 
 pub fn register_modules(table: &mut HashMap<String, fn(&mut Runner) -> Value>) {
-    register_module!(table, math::Math);
-    register_module!(table, io::Io);
+    table.insert(math::Math::name(), math::Math::load);
+    table.insert(io::Io::name(), io::Io::load);
+    table.insert(list::List::name(), list::List::load);
 }

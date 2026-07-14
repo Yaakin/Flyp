@@ -1,11 +1,16 @@
-use std::collections::HashMap;
-use crate::runner::{Runner, Value, Stored, Function};
+use std::rc::Rc;
+use std::cell::RefCell;
+use crate::runner::{NativeObject, Value, Runner};
 use crate::modules::Module;
 
-pub struct Io;
+pub struct Io {}
 
 impl Io {
-    pub fn print(r: &mut Runner, args: &Vec<Value>, _: Option<Value>) -> Value {
+    pub fn new() -> Self {
+        Self {}
+    }
+
+    pub fn print(r: &mut Runner, args: &[Value]) -> Value {
         for a in args {
             print!("{} ", a.repr(r));
         }
@@ -14,15 +19,24 @@ impl Io {
     }
 }
 
+impl NativeObject for Io {
+    fn get(&self, field: &str) -> Value {
+        match field {
+            "print" => Value::NativeFunction(Rc::new(RefCell::new(Io::print))),
+            _ => {
+                println!("Field {field} not found");
+                Value::Nil
+            }
+        }
+    }
+}
+
 impl Module for Io {
-    fn get_load_name() -> String {
+    fn name() -> String {
         "io".to_string()
     }
 
-    fn load(r: &mut Runner) -> Value {
-        let res = Stored::Object(HashMap::from([
-            ("print".to_string(), r.register(Stored::Func(Function::Native(Io::print)))),
-        ]));
-        r.register(res)
+    fn load(_r: &mut Runner) -> Value {
+        Value::NativeObject(Rc::new(RefCell::new(Io::new())))
     }
 }

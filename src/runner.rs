@@ -1,22 +1,35 @@
 use std::collections::HashMap;
+use std::rc::Rc;
+use std::cell::RefCell;
 use std::fs;
 
 use crate::parser::{Parser, Expr, Target};
 
-type MemId = usize;
+pub type StrId      = usize;
+pub type ListId     = usize;
+pub type ObjectId   = usize;
+pub type FunctionId = usize;
 
-#[derive(Clone, Debug)]
-pub struct MemCell {
-    //pub id: MemId,
-    pub data: Stored,
+pub type NativeFunction = dyn for<'a> FnMut(&'a mut Runner, &'a [Value]) -> Value;
+
+pub trait NativeObject {
+    fn get(&self, field: &str) -> Value;
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone)]
 pub enum Value {
     Nil,
     Bool(bool),
     Number(f64),
-    Ref(MemId),
+
+    Str(StrId),
+    List(ListId),
+    Object(ObjectId),
+    Function(FunctionId),
+
+    NativeObject(Rc<RefCell<dyn NativeObject>>),
+    NativeFunction(Rc<RefCell<NativeFunction>>),
+    //Native(for <'a, 'b> fn(&'a mut Runner, &'b Vec<Value>, reflection: Option<Value>) -> Value),
 }
 
 impl Value {
@@ -25,13 +38,12 @@ impl Value {
             Value::Nil => false,
             Value::Bool(b) => *b,
             Value::Number(x) => *x != 0.,
-            Value::Ref(id) => {
-                if let Some(s) = r.get_mem(*id) {
-                    s.to_bool()
-                } else {
-                    false
-                }
-            }
+            Value::Str(id) => r.get_str(*id).len() > 0,
+            Value::List(id) => r.get_list(*id).len() > 0,
+            Value::Object(id) => r.get_object(*id).len() > 0,
+            Value::Function(_) => true,
+            Value::NativeObject(_) => true,
+            Value::NativeFunction(_) => true,
         }
     }
 
@@ -39,82 +51,59 @@ impl Value {
         match self {
             Value::Nil => "nil".to_string(),
             Value::Bool(b) => if *b { "true".to_string() } else { "false".to_string() },
-            Value::Number(x) => format!("{x}"),
-            Value::Ref(id) => {
-                if let Some(s) = r.get_mem(*id) {
-                    s.repr(r)
-                } else {
-                    Value::Nil.repr(r)
-                }
-            }
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum Function {
-    Defined {
-        args: Vec<String>,
-        value: Expr,
-        closure: HashMap<String, Value>,
-        reflection: bool,
-    },
-    Native(for <'a, 'b> fn(&'a mut Runner, &'b Vec<Value>, reflection: Option<Value>) -> Value),
-}
-
-#[derive(Clone, Debug)]
-pub enum Stored {
-    Str(String),
-
-    Func(Function),
-    Object(HashMap<String, Value>),
-    List(Vec<Value>),
-}
-
-impl Stored {
-    pub fn to_bool(&self) -> bool {
-        match self {
-            Stored::Str(s) => s.len() > 0,
-            Stored::Func(_) => true,
-            Stored::Object(fields) => fields.len() > 0,
-            Stored::List(elements) => elements.len() > 0,
-        }
-    }
-    
-    pub fn repr(&self, r: &Runner) -> String {
-       match self {
-            Stored::Str(s) => s.clone(),
-            Stored::Func(Function::Defined {..}) => format!("<Function>"),
-            Stored::Func(Function::Native(_)) => format!("<NativeFunction>"),
-            Stored::Object(fields) => {
-                let mut res = "[".to_string();
-                for (key, val) in fields.iter() {
-                    res.push_str(&format!("{}: {}; ", key, val.repr(r)));
+            Value::Number(x) => format!("{}", (x*10000.).round() / 10000.),
+            Value::Str(id) => r.get_str(*id).to_string(),
+            Value::List(id) => {
+                let mut res = String::from("<");
+                for x in r.get_list(*id) {
+                    res.push_str(&x.repr(r));
+                    res.push_str("; ");
                 }
                 if res.len() > 1 {
-                    res.pop(); res.pop();
+                    res.pop();
+                    res.pop();
+                }
+                res.push('>');
+                res
+            },
+            Value::Object(id) => {
+                let mut res = String::from("[");
+                for (k, v) in r.get_object(*id) {
+                    res.push_str(k);
+                    res.push_str(": ");
+                    res.push_str(&v.repr(r));
+                    res.push_str("; ");
+                }
+                if res.len() > 1 {
+                    res.pop();
+                    res.pop();
                 }
                 res.push(']');
                 res
             },
-            Stored::List(elements) => {
-                let mut res = "<".to_string();
-                for val in elements {
-                    res.push_str(&format!("{}; ", val.repr(r)));
-                }
-                res.pop(); res.pop();
-                res.push('>');
-                res
-            },
-
-       } 
+            Value::Function(_) => "<Function>".to_string(),
+            Value::NativeObject(_) => "<NativeObject> (to be implemented)".to_string(),
+            Value::NativeFunction(_) => "<NativeFunction>".to_string(),
+        }
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone)]
+pub struct Function {
+    args: Vec<String>,
+    value: Expr,
+    closure: HashMap<String, Value>,
+    reflection: bool,
+}
+
 pub struct Runner {
     pub loadables: HashMap<String, fn(&mut Runner) -> Value>,
-    pub memory: HashMap<MemId, MemCell>,
+
+    pub strings: HashMap<StrId, String>,
+    pub lists: HashMap<ListId, Vec<Value>>,
+    pub objects: HashMap<ObjectId, HashMap<String, Value>>,
+    pub functions: HashMap<FunctionId, Function>,
+
     pub scopes: Vec<HashMap<String, Value>>,
     pub globals: HashMap<String, Value>,
 }
@@ -125,45 +114,85 @@ impl Runner {
         crate::modules::register_modules(&mut loadables);
         Self {
             loadables: loadables,
-            memory: HashMap::from([
-                (0 as MemId, MemCell { data: Stored::Func(Function::Native(Runner::import)) }),
-                (1 as MemId, MemCell { data: Stored::Func(Function::Native(Runner::id)) }),
-            ]),
+
+            strings: HashMap::new(),
+            lists: HashMap::new(),
+            objects: HashMap::new(),
+            functions: HashMap::new(),
+
             scopes: Vec::new(),
             globals: HashMap::from([
                 ("nil".to_string(), Value::Nil),
                 ("true".to_string(), Value::Bool(true)),
                 ("false".to_string(), Value::Bool(false)),
-                ("import".to_string(), Value::Ref(0)),
-                ("id".to_string(), Value::Ref(1)),
+                ("import".to_string(), Value::NativeFunction(Rc::new(RefCell::new(Runner::import)))),
+                //("io".to_string(), Value::NativeObject(Rc::new(RefCell::new(modules::Io::new())))),
             ]),
         }
     }
 
-    pub fn store(&mut self, data: Stored) -> MemId {
-        let id = self.memory.len();
-        let cell = MemCell {
-            data: data,
-        };
-        self.memory.insert(id, cell);
-        id
+    pub fn get_str(&self, id: StrId) -> &str {
+        if let Some(s) = self.strings.get(&id) {
+            s
+        } else {
+            panic!("Unable to retrieve str with id {id}, interpreter memory corrupted");
+        }
     }
 
-    pub fn register(&mut self, data: Stored) -> Value {
-        let id = self.store(data);
-        Value::Ref(id)
+    pub fn get_list(&self, id: ListId) -> &Vec<Value> {
+        if let Some(s) = self.lists.get(&id) {
+            s
+        } else {
+            panic!("Unable to retrieve list with id {id}, interpreter memory corrupted");
+        }
     }
 
-    pub fn get_mem(&self, id: MemId) -> Option<&Stored> {
-        if let Some(cell) = self.memory.get(&id) {
-            Some(&cell.data)
-        } else { None }
+    pub fn get_object(&self, id: ObjectId) -> &HashMap<String, Value> {
+        if let Some(s) = self.objects.get(&id) {
+            s
+        } else {
+            panic!("Unable to retrieve object with id {id}, interpreter memory corrupted");
+        }
     }
 
-    pub fn get_mem_mut(&mut self, id: MemId) -> Option<&mut Stored> {
-        if let Some(cell) = self.memory.get_mut(&id) {
-            Some(&mut cell.data)
-        } else { None }
+    pub fn get_func(&self, id: FunctionId) -> &Function {
+        if let Some(s) = self.functions.get(&id) {
+            s
+        } else {
+            panic!("Unable to retrieve function with id {id}, interpreter memory corrupted");
+        }
+    }
+
+    pub fn get_str_mut(&mut self, id: StrId) -> &mut str {
+        if let Some(s) = self.strings.get_mut(&id) {
+            s
+        } else {
+            panic!("Unable to retrieve str with id {id}, interpreter memory corrupted");
+        }
+    }
+
+    pub fn get_list_mut(&mut self, id: ListId) -> &mut Vec<Value> {
+        if let Some(l) = self.lists.get_mut(&id) {
+            l
+        } else {
+            panic!("Unable to retrieve list with id {id}, interpreter memory corrupted");
+        }
+    }
+
+    pub fn get_object_mut(&mut self, id: ObjectId) -> &mut HashMap<String, Value> {
+        if let Some(o) = self.objects.get_mut(&id) {
+            o
+        } else {
+            panic!("Unable to retrieve object with id {id}, interpreter memory corrupted");
+        }
+    }
+
+    pub fn get_func_mut(&mut self, id: FunctionId) -> &mut Function {
+        if let Some(f) = self.functions.get_mut(&id) {
+            f
+        } else {
+            panic!("Unable to retrieve function with id {id}, interpreter memory corrupted");
+        }
     }
 
     pub fn get_scope(&mut self) -> &mut HashMap<String, Value> {
@@ -172,53 +201,6 @@ impl Runner {
             &mut self.scopes[n]
         } else {
             &mut self.globals
-        }
-    }
-
-
-    pub fn get_val(&mut self, t: Target) -> Value {
-        match t {
-            Target::Var(name) => {
-                let scope = self.get_scope();
-                if scope.contains_key(&name) {
-                    *scope.get(&name).unwrap()
-                } else if self.globals.contains_key(&name) {
-                    *self.globals.get(&name).unwrap()
-                } else {
-                    println!("Cannot find identifier {name} in this scope THIS MESSAGE IS NOT NORMAL IT NEEDS TO BE FIXED");
-                    Value::Nil
-                }
-            },
-            Target::Field { var, field } => {
-                if let Value::Ref(id) = self.eval(&*var) && let Some(Stored::Object(fields)) = self.get_mem(id) {
-                    if fields.contains_key(&field) {
-                        *fields.get(&field).unwrap()
-                    } else {
-                        println!("Cannot find field {field}");
-                        Value::Nil
-                    }
-                } else {
-                    println!("Trying to access a field from non-object value");
-                    Value::Nil
-                }
-            },
-            Target::Index { var, index } => {
-                if let Value::Number(i) = self.eval(&*index) {
-                    if let Value::Ref(id) = self.eval(&var) && let Some(Stored::List(vals)) = self.get_mem(id) {
-                        if (i as usize) < vals.len() {
-                            vals[i as usize]
-                        } else {
-                            Value::Nil
-                        }
-                    } else {
-                        println!("Cannot index a non-list value");
-                        Value::Nil
-                    }
-                } else {
-                    println!("Cannot index a list with non-number value");
-                    Value::Nil
-                }
-            }
         }
     }
 
@@ -234,15 +216,16 @@ impl Runner {
                 }
             },
             Target::Field { var, field } => {
-                if let Value::Ref(id) = self.eval(&*var) && let Some(Stored::Object(fields)) = self.get_mem_mut(id) {
-                    fields.insert(field, val);
+                if let Value::Object(id) = self.eval(&*var) {
+                    self.get_object_mut(id).insert(field, val);
                 } else {
                     println!("Trying to set a field from non-object value");
                 }
             },
             Target::Index { var, index } => {
                 if let Value::Number(i) = self.eval(&*index) {
-                    if let Value::Ref(id) = self.eval(&var) && let Some(Stored::List(vals)) = self.get_mem_mut(id) {
+                    if let Value::List(id) = self.eval(&var) {
+                        let vals = self.get_list_mut(id);
                         if (i as usize) < vals.len() {
                             vals[i as usize] = val;
                         } else {
@@ -258,22 +241,57 @@ impl Runner {
         }
     }
 
-    pub fn needs_reflection(&mut self, val: &Expr) -> Option<(Function, Option<Value>)> {
-        if let Expr::Access(Target::Field { var, field }) = val {
-            if let Value::Ref(id) = self.eval(var) && let Some(Stored::Object(fields)) = self.get_mem(id) {
-                if fields.contains_key(field) && let Value::Ref(f_id) = fields.get(field).unwrap() && let Some(Stored::Func(f)) = self.get_mem(*f_id) {
-                    Some((f.clone(), Some(Value::Ref(id))))
+    pub fn get_val(&mut self, t: Target) -> Value {
+        match t {
+            Target::Var(name) => {
+                let scope = self.get_scope();
+                if scope.contains_key(&name) {
+                    scope.get(&name).unwrap().clone()
+                } else if self.globals.contains_key(&name) {
+                    self.globals.get(&name).unwrap().clone()
                 } else {
-                    None
+                    println!("Cannot find identifier {name} in this scope");
+                    Value::Nil
                 }
-            } else {
-                None
-            }
-        } else {
-            if let Value::Ref(id) = self.eval(val) && let Some(Stored::Func(f)) = self.get_mem(id) {
-                Some((f.clone(), None))
-            } else {
-                None
+            },
+            Target::Field { var, field } => {
+                match self.eval(&*var) {
+                    Value::Object(id) => {
+                        let o = self.get_object(id);
+                        if o.contains_key(&field) {
+                            o.get(&field).unwrap().clone()
+                        } else {
+                            println!("Cannot find field {field}");
+                            Value::Nil
+                        }
+                    },
+                    Value::NativeObject(o) => {
+                        o.as_ref().borrow_mut().get(&field)
+                    },
+                    _ => {
+                        println!("Trying to access a field from a non-object value");
+                        Value::Nil
+                    }
+                }
+            },
+            Target::Index { var, index } => {
+                if let Value::Number(i) = self.eval(&*index) {
+                    if let Value::List(id) = self.eval(&*var) {
+                        let l = self.get_list(id);
+                        if (i as usize) < l.len() {
+                            l[i as usize].clone()
+                        } else {
+                            println!("Index out of bounds");
+                            Value::Nil
+                        }
+                    } else {
+                        println!("Cannnot index a non-list value");
+                        Value::Nil
+                    }
+                } else {
+                    println!("Cannot index a list with a non-number value");
+                    Value::Nil
+                }
             }
         }
     }
@@ -283,79 +301,67 @@ impl Runner {
             Expr::Nil => Value::Nil,
             Expr::Number(x) => Value::Number(*x),
             Expr::Str(s) => {
-                let id =self.store(Stored::Str(s.to_string()));
-                Value::Ref(id)
+                let id = self.strings.len();
+                self.strings.insert(id, s.to_string());
+                Value::Str(id)
             },
-            Expr::Object(fields) => {
+            Expr::Object(o) => {
                 let mut res = HashMap::new();
-
-                for (key, val) in fields.iter() {
-                    res.insert(key.to_string(), self.eval(val));
+                let id = self.objects.len();
+                for (k, v) in o {
+                    res.insert(k.clone(), self.eval(v));
                 }
-
-                let id = self.store(Stored::Object(res));
-                Value::Ref(id)
+                self.objects.insert(id, res);
+                Value::Object(id)
             },
-            Expr::List(elements) => {
+            Expr::List(exprs) => {
                 let mut res = Vec::new();
-
-                for e in elements {
+                let id = self.lists.len();
+                for e in exprs {
                     res.push(self.eval(e));
                 }
-
-                let id = self.store(Stored::List(res));
-                Value::Ref(id)
+                self.lists.insert(id, res);
+                Value::List(id)
             },
             Expr::Function { args, value, closure, reflection } => {
+                let id = self.functions.len();
                 let mut closed = HashMap::<String, Value>::new();
                 for name in closure {
                     closed.insert(name.clone(), self.eval(&Expr::Access(Target::Var(name.clone()))));
                 }
-                let id = self.store(Stored::Func(Function::Defined { args: args.to_vec(), value: *value.clone(), closure: closed, reflection: *reflection }));
-                Value::Ref(id)
+                self.functions.insert(id, Function {
+                    args: args.to_vec(),
+                    value: *value.clone(),
+                    closure: closed,
+                    reflection: *reflection
+                });
+                Value::Function(id)
             },
+
+
             Expr::If { cond, value, else_value } => {
-                if self.eval(cond).to_bool(&self) {
+                if self.eval(cond).to_bool(self) {
                     self.eval(value)
                 } else {
                     self.eval(else_value)
                 }
             },
             Expr::While { cond, value, else_value } => {
-                let mut ran_once = false;
                 let mut res = Value::Nil;
-                while self.eval(cond).to_bool(&self) {
+                let mut iter_once = false;
+                while self.eval(cond).to_bool(self) {
                     res = self.eval(value);
-                    ran_once = true;
+                    iter_once = true;
                 }
-                if !ran_once {
+                if !iter_once {
                     res = self.eval(else_value);
                 }
                 res
             },
             Expr::Binding { target, value } => {
                 let v = self.eval(value);
-                self.set_val(target.clone(), v);
+                self.set_val(target.clone(), v.clone());
                 v
-            },
-            Expr::Access(target) => {
-                self.get_val(target.clone())
-            },
-            Expr::FuncCall { func, args: arg_exprs } => {
-                match self.needs_reflection(func) {
-                    Some((f, refl)) => {
-                        let mut arg_values = Vec::with_capacity(arg_exprs.len());
-                        for e in arg_exprs {
-                            arg_values.push(self.eval(e));
-                        }
-
-                        self.call_func(f, arg_values, refl)
-                    },
-                    None => {
-                        println!("Cannot call non-function value");
-                        Value::Nil
-                    }
-                }
             },
             Expr::Chain(exprs) => {
                 let mut res = Value::Nil;
@@ -364,82 +370,98 @@ impl Runner {
                 }
                 res
             },
+            Expr::Access(t) => {
+                self.get_val(t.clone())
+            },
+            Expr::FuncCall { func, args: args_exprs } => {
+                let mut args_values = Vec::new();
+                for e in args_exprs {
+                    args_values.push(self.eval(e));
+                }
+                if let Expr::Access(Target::Field { var, field }) = &**func {
+                    match self.eval(&*var) {
+                        Value::Object(id) => {
+                            let o = self.get_object(id);
+                            if o.contains_key(field) {
+                                self.call_func(o.get(field).unwrap().clone(), &args_values, Some(Value::Object(id)))
+                            } else {
+                                println!("Cannot find field {field}");
+                                Value::Nil
+                            }
+                        },
+                        Value::NativeObject(o) => {
+                            self.call_func(o.as_ref().borrow_mut().get(&field), &args_values, None)
+                        },
+                        _ => {
+                            println!("Trying to access a field from a non-object value");
+                            Value::Nil
+                        }
+                    }
+                } else {
+                    let f = self.eval(func);
+                    self.call_func(f, &args_values, None)
+                }
+            },
         }
     }
 
-    pub fn call_func(&mut self, f: Function, args: Vec<Value>, refl: Option<Value>) -> Value {
+
+    pub fn call_func(&mut self, f: Value, args: &Vec<Value>, refl: Option<Value>) -> Value {
         match f {
-            Function::Defined { args: arg_names, value, closure, reflection } => {
+            Value::Function(id) => {
+                let f = self.get_func(id);
+                let Function { args: args_names, value, closure, reflection } = f.clone();
+
                 self.scopes.push(HashMap::new());
                 for (k, v) in closure {
-                    self.set_val(Target::Var(k.to_string()), v);
+                    self.set_val(Target::Var(k.to_string()), v.clone());
                 }
-
-                for i in 0..arg_names.len() {
-                    if i < args.len() {
-                        self.set_val(Target::Var(arg_names[i].clone()), args[i].clone());
+                for i in 0..args_names.len() {
+                    if args.len() > i {
+                        self.set_val(Target::Var(args_names[i].clone()), args[i].clone());
                     } else {
-                        self.set_val(Target::Var(arg_names[i].clone()), Value::Nil);
+                        self.set_val(Target::Var(args_names[i].clone()), Value::Nil);
                     }
                 }
-                
-                if reflection {
-                    if refl.is_some() {
-                        self.set_val(Target::Var("self".to_string()), refl.unwrap());
-                    } else {
-                        self.set_val(Target::Var("self".to_string()), Value::Nil);
-                    }
-                } 
-
+                if reflection && refl.is_some() {
+                    self.set_val(Target::Var("self".to_string()), refl.unwrap());
+                }
                 let res = self.eval(&value);
                 self.scopes.pop();
                 res
             },
-            Function::Native(f) => f(self, &args, refl)
+            Value::NativeFunction(f) => {
+                let mut func = f.as_ref().borrow_mut();
+                func(self, &args)
+            },
+            _ => {
+                println!("Cannot call non-function value");
+                Value::Nil
+            }
         }
     }
 
-    fn import(&mut self, args: &Vec<Value>, _: Option<Value>) -> Value {
+
+    pub fn import(r: &mut Runner, args: &[Value]) -> Value {
         if args.len() < 1 {
-            println!("Import path expected");
+            println!("Invalid arguments");
             return Value::Nil;
         }
-        if let Value::Ref(id) = &args[0] && let Some(Stored::Str(path)) = self.get_mem(*id) {
-            if let Ok(true) = fs::exists(&path) {
-                if let Ok(content) = fs::read_to_string(path) {
-                    let mut p = Parser::new(&content);
-                    self.eval(&p.expr())
-                } else {
-                    println!("Error while reading imported file");
-                    Value::Nil
-                }
-            } else if path.starts_with("std::") {
-                let namespace = &path[5..];
-                if self.loadables.contains_key(namespace) {
-                    self.loadables.get(namespace).unwrap()(self)
-                } else {
-                    println!("Cannot find standard module {namespace}");
-                    Value::Nil
-                }
+
+        if let Value::Str(id) = &args[0] {
+            let name = r.get_str(*id);
+            if r.loadables.contains_key(name) {
+                r.loadables.get(name).unwrap()(r)
+            } else if let Ok(true) = fs::exists(name) && let Ok(src) = fs::read_to_string(name) {
+                let mut p = Parser::new(&src);
+                r.eval(&p.expr())
             } else {
-                println!("Import path does not exist");
+                println!("Unable to import \"{name}\": not found in modules, and path does not exist");
                 Value::Nil
             }
         } else {
-            println!("Expected a string path to import");
+            println!("Invalid arguments");
             Value::Nil
-        }
-    }
-
-    fn id(&mut self, args: &Vec<Value>, _: Option<Value>) -> Value {
-        if args.len() < 1 {
-            println!("Invalid arguments for id");
-            return Value::Nil;
-        }
-
-        match args[0] {
-            Value::Ref(id) => Value::Number(id as f64),
-            _ => Value::Nil,
         }
     }
 }

@@ -6,8 +6,9 @@ mod parser;
 mod runner;
 mod modules;
 
-pub mod common;
+mod common;
 
+pub use crate::common::run_file;
 pub use crate::parser::Parser;
-pub use crate::runner::{Runner, Value};
+pub use crate::runner::{Runner, Value, NativeFunction, NativeObject};
 pub use crate::modules::Module;

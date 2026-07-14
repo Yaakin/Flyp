@@ -284,12 +284,15 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn scan_closure(&self, e: &Expr) -> HashSet<String> {
+    fn scan_closure(&self, e: &Expr) -> (HashSet<String>, HashSet<String>) {
         let mut res = HashSet::new();
+        let mut locals = HashSet::new();
         match e {
             Expr::Function { args, value, closure, reflection: _ } => {
                 res.extend(closure.clone());
-                res.extend(self.scan_closure(value));
+                let (mut c, l) = self.scan_closure(value);
+                c = c.difference(&l).map(String::clone).collect::<HashSet<String>>();
+                res.extend(c);
 
                 for a in args {
                     res.remove(a);
@@ -297,50 +300,93 @@ impl<'a> Parser<'a> {
             },
             Expr::Object(fields) => {
                 for (_, val) in fields {
-                    res.extend(self.scan_closure(val));
+                    let (c, l) = self.scan_closure(val);
+                    res.extend(c);
+                    locals.extend(l);
                 }
             },
             Expr::List(exprs) => {
                 for e in exprs {
-                    res.extend(self.scan_closure(e));
+                    let (c, l) = self.scan_closure(e);
+                    res.extend(c);
+                    locals.extend(l);
                 }
 
             },
             Expr::Access(t) => { 
                 match t {
                     Target::Var(name) => { res.insert(name.to_string()); },
-                    Target::Field { var, .. } => { res.extend(self.scan_closure(var)); },
-                    Target::Index { var, .. } => { res.extend(self.scan_closure(var)); },
+                    Target::Field { var, .. } => {
+                        
+                    },
+                    Target::Index { var, .. } => {
+                        let (c, l) = self.scan_closure(var);
+                        res.extend(c);
+                        locals.extend(l);
+                    },
                 }
             },
             //res.extend(self.scan_closure(&t.base())); },
             Expr::If { cond, value, else_value } => {
-                res.extend(self.scan_closure(cond));
-                res.extend(self.scan_closure(value));
-                res.extend(self.scan_closure(else_value));
+                let (mut c, mut l) = self.scan_closure(cond);
+                res.extend(c);
+                locals.extend(l);
+                (c, l) = self.scan_closure(value);
+                res.extend(c);
+                locals.extend(l);
+                (c, l) = self.scan_closure(else_value);
+                res.extend(c);
+                locals.extend(l);
             },
             Expr::While { cond, value, else_value } => {
-                res.extend(self.scan_closure(cond));
-                res.extend(self.scan_closure(value));
-                res.extend(self.scan_closure(else_value));
+                let (mut c, mut l) = self.scan_closure(cond);
+                res.extend(c);
+                locals.extend(l);
+                (c, l) = self.scan_closure(value);
+                res.extend(c);
+                locals.extend(l);
+                (c, l) = self.scan_closure(else_value);
+                res.extend(c);
+                locals.extend(l);
             },
-            Expr::Binding { value, .. } => {
-                res.extend(self.scan_closure(value));
+            Expr::Binding { target, value } => {
+                match target {
+                    Target::Var(name) => { locals.insert(name.to_string()); },
+                    Target::Field { var, .. } => {
+                        let (c, l) = self.scan_closure(var);
+                        res.extend(c);
+                        locals.extend(l);
+                    },
+                    Target::Index { var, .. } => {
+                        let (c, l) = self.scan_closure(var);
+                        res.extend(c);
+                        locals.extend(l);
+                    },
+                }
+                let (c, l) = self.scan_closure(value);
+                res.extend(c);
+                locals.extend(l);
             },
             Expr::Chain(exprs) => {
                 for e in exprs {
-                    res.extend(self.scan_closure(e));
+                    let (c, l) = self.scan_closure(e);
+                    res.extend(c);
+                    locals.extend(l);
                 }
             },
             Expr::FuncCall { func, args } => {
-                res.extend(self.scan_closure(func));
+                let (c, l) = self.scan_closure(func);
+                res.extend(c);
+                locals.extend(l);
                 for a in args {
-                    res.extend(self.scan_closure(a));
+                    let (c, l) = self.scan_closure(a);
+                    res.extend(c);
+                    locals.extend(l);
                 }
             },
             _ => {}
         }
-        res
+        (res, locals)
     }
 
     pub fn expr(&mut self) -> Expr {
@@ -420,7 +466,8 @@ impl<'a> Parser<'a> {
                     reflection: false,
                 };
 
-                let mut closure = self.scan_closure(&res);
+                let (c, l) = self.scan_closure(&res);
+                let mut closure = c.difference(&l).map(String::clone).collect::<HashSet<String>>();
                 let mut reflection = false;
                 if closure.get("self").is_some() {
                     closure.remove("self");
