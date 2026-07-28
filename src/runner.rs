@@ -68,11 +68,9 @@ impl Value {
             },
             Value::Object(id) => {
                 let mut res = String::from("[");
-                for (k, v) in r.get_object(*id) {
-                    res.push_str(k);
-                    res.push_str(": ");
-                    res.push_str(&v.repr(r));
-                    res.push_str("; ");
+                let o = r.get_object(*id);
+                for (k, v) in o {
+                    res.push_str(&format!("{}: {}; ", k, v.repr(r)));
                 }
                 if res.len() > 1 {
                     res.pop();
@@ -85,6 +83,22 @@ impl Value {
             Value::NativeObject(_) => "<NativeObject> (to be implemented)".to_string(),
             Value::NativeFunction(_) => "<NativeFunction>".to_string(),
         }
+    }
+}
+
+impl std::fmt::Debug for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_fmt(format_args!("Value::{}", match self {
+            Value::Nil => "Nil".to_string(),
+            Value::Bool(b) => format!("Bool({})", if *b { "true" } else { "false" }),
+            Value::Number(x) => format!("Number({})", (x*10000.).round() / 10000.),
+            Value::Str(id) => format!("Str(id: {})", id),
+            Value::List(id) => format!("List(id: {})", id),
+            Value::Object(id) => format!("Object(id: {})", id),
+            Value::Function(_) => "<Function>".to_string(),
+            Value::NativeObject(_) => "<NativeObject> (to be implemented)".to_string(),
+            Value::NativeFunction(_) => "<NativeFunction>".to_string(),
+        }))
     }
 }
 
@@ -307,28 +321,28 @@ impl Runner {
             },
             Expr::Object(o) => {
                 let mut res = HashMap::new();
-                let id = self.objects.len();
                 for (k, v) in o {
                     res.insert(k.clone(), self.eval(v));
                 }
+                let id = self.objects.len();
                 self.objects.insert(id, res);
                 Value::Object(id)
             },
             Expr::List(exprs) => {
                 let mut res = Vec::new();
-                let id = self.lists.len();
                 for e in exprs {
                     res.push(self.eval(e));
                 }
+                let id = self.lists.len();
                 self.lists.insert(id, res);
                 Value::List(id)
             },
             Expr::Function { args, value, closure, reflection } => {
-                let id = self.functions.len();
                 let mut closed = HashMap::<String, Value>::new();
                 for name in closure {
                     closed.insert(name.clone(), self.eval(&Expr::Access(Target::Var(name.clone()))));
                 }
+                let id = self.functions.len();
                 self.functions.insert(id, Function {
                     args: args.to_vec(),
                     value: *value.clone(),
