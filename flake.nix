@@ -11,7 +11,6 @@
         # nix develop or nix shell
         devShell = pkgs.mkShell {
 					packages = with pkgs; [
-						sdl3
 					];
 				};
       }

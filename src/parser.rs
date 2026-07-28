@@ -317,7 +317,9 @@ impl<'a> Parser<'a> {
                 match t {
                     Target::Var(name) => { res.insert(name.to_string()); },
                     Target::Field { var, .. } => {
-                        
+                        let (c, l) = self.scan_closure(var);
+                        res.extend(c);
+                        locals.extend(l);
                     },
                     Target::Index { var, .. } => {
                         let (c, l) = self.scan_closure(var);
